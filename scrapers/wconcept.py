@@ -45,19 +45,23 @@ class WConceptScraper(BaseScraper):
     # Bestseller scraping
     # ------------------------------------------------------------------
 
-    def scrape_bestsellers(self) -> list[dict]:
-        """Fetch women's bestseller product rankings from the W Concept API."""
-        logger.info(f"[{self.platform_name}] Fetching bestsellers from API...")
+    # Date types to fetch — each returns a different ranking with partial overlap,
+    # giving us broader product coverage after deduplication.
+    _DATE_TYPES = ["daily", "weekly", "realtime"]
 
+    def _fetch_bestseller_page(
+        self, date_type: str = "daily", page_size: int = 200
+    ) -> list[dict]:
+        """Fetch one page of bestseller items for a given date type."""
         payload = {
             "custNo": "0",
             "domain": "WOMEN",
             "genderType": "all",
-            "dateType": "daily",
+            "dateType": date_type,
             "ageGroup": "all",
             "depth1Code": "ALL",
             "depth2Code": "ALL",
-            "pageSize": 200,
+            "pageSize": page_size,
             "pageNo": 1,
         }
 
@@ -65,28 +69,73 @@ class WConceptScraper(BaseScraper):
 
         if data.get("result") != "SUCCESS":
             logger.error(
-                f"[{self.platform_name}] API returned non-success: {data.get('message')}"
+                f"[{self.platform_name}] API returned non-success for "
+                f"dateType={date_type}: {data.get('message')}"
             )
             return []
 
-        content = data.get("data", {}).get("content", [])
-        logger.info(
-            f"[{self.platform_name}] API returned {len(content)} products"
-        )
+        return data.get("data", {}).get("content", [])
 
-        items: list[dict] = []
-        for rank, entry in enumerate(content, start=1):
+    def scrape_bestsellers(self) -> list[dict]:
+        """Fetch women's bestseller product rankings from the W Concept API.
+
+        Fetches rankings across multiple date types (daily, weekly, realtime)
+        to get broader product coverage. Deduplicates by product URL.
+        """
+        logger.info(f"[{self.platform_name}] Fetching bestsellers from API...")
+
+        all_items: list[dict] = []
+        seen_urls: set[str] = set()
+        rank = 0
+
+        for date_type in self._DATE_TYPES:
+            logger.info(
+                f"[{self.platform_name}] Fetching dateType={date_type}..."
+            )
             try:
-                item = self._parse_product(entry, rank)
-                if item:
-                    items.append(item)
+                content = self._fetch_bestseller_page(date_type=date_type)
             except Exception as e:
-                logger.debug(
-                    f"[{self.platform_name}] Skipping product at rank {rank}: {e}"
+                logger.warning(
+                    f"[{self.platform_name}] Failed dateType={date_type}: {e}"
                 )
+                continue
 
-        logger.info(f"[{self.platform_name}] Extracted {len(items)} bestseller items")
-        return items
+            if not content:
+                logger.info(
+                    f"[{self.platform_name}] No items for dateType={date_type}"
+                )
+                continue
+
+            logger.info(
+                f"[{self.platform_name}] API returned {len(content)} products "
+                f"for dateType={date_type}"
+            )
+
+            for entry in content:
+                rank += 1
+                try:
+                    item = self._parse_product(entry, rank)
+                    if item:
+                        url = item.get("product_url", "")
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            all_items.append(item)
+                except Exception as e:
+                    logger.debug(
+                        f"[{self.platform_name}] Skipping product at rank {rank}: {e}"
+                    )
+
+            self.random_delay()
+
+        # Re-number ranks sequentially after dedup
+        for i, item in enumerate(all_items, start=1):
+            item["rank"] = i
+
+        logger.info(
+            f"[{self.platform_name}] Extracted {len(all_items)} bestseller items "
+            f"(after dedup across {len(self._DATE_TYPES)} date types)"
+        )
+        return all_items
 
     def _parse_product(self, entry: dict, rank: int) -> Optional[dict]:
         """Parse a single product entry from the API response."""

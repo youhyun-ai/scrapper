@@ -1,4 +1,4 @@
-"""Cross-Platform comparison dashboard."""
+"""플랫폼 비교 대시보드."""
 from __future__ import annotations
 
 import sqlite3
@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-DB_PATH = Path(__file__).resolve().parents[2] / "data" / "trends.db"
+DB_PATH = Path(__file__).resolve().parents[1] / "data" / "trends.db"
 
 
 def _conn() -> sqlite3.Connection:
@@ -16,22 +16,22 @@ def _conn() -> sqlite3.Connection:
 
 
 # ---------------------------------------------------------------------------
-# Cached queries
+# 캐시 쿼리
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=300)
 def get_cross_platform_brands() -> pd.DataFrame:
-    """Brands that appear on more than one platform."""
     conn = _conn()
     df = pd.read_sql_query(
         """
-        SELECT brand, GROUP_CONCAT(DISTINCT platform) AS platforms,
-               COUNT(DISTINCT platform) AS platform_count
+        SELECT brand AS '브랜드',
+               GROUP_CONCAT(DISTINCT platform) AS '등록 플랫폼',
+               COUNT(DISTINCT platform) AS '플랫폼 수'
         FROM bestseller_rankings
         WHERE brand IS NOT NULL AND brand != ''
         GROUP BY brand
-        HAVING platform_count > 1
-        ORDER BY platform_count DESC, brand
+        HAVING COUNT(DISTINCT platform) > 1
+        ORDER BY COUNT(DISTINCT platform) DESC, brand
         """,
         conn,
     )
@@ -44,11 +44,11 @@ def get_avg_price_by_platform() -> pd.DataFrame:
     conn = _conn()
     df = pd.read_sql_query(
         """
-        SELECT platform, ROUND(AVG(price)) AS avg_price
+        SELECT platform AS '플랫폼', ROUND(AVG(price)) AS '평균 가격'
         FROM bestseller_rankings
         WHERE price IS NOT NULL AND price > 0
         GROUP BY platform
-        ORDER BY avg_price DESC
+        ORDER BY AVG(price) DESC
         """,
         conn,
     )
@@ -61,11 +61,11 @@ def get_avg_discount_by_platform() -> pd.DataFrame:
     conn = _conn()
     df = pd.read_sql_query(
         """
-        SELECT platform, ROUND(AVG(discount_pct), 1) AS avg_discount
+        SELECT platform AS '플랫폼', ROUND(AVG(discount_pct), 1) AS '평균 할인율'
         FROM bestseller_rankings
         WHERE discount_pct IS NOT NULL AND discount_pct > 0
         GROUP BY platform
-        ORDER BY avg_discount DESC
+        ORDER BY AVG(discount_pct) DESC
         """,
         conn,
     )
@@ -77,46 +77,46 @@ def get_avg_discount_by_platform() -> pd.DataFrame:
 # UI
 # ---------------------------------------------------------------------------
 
-st.header("Cross-Platform Comparison")
+st.header("플랫폼 비교")
 
-# --- Brands across platforms ---
-st.subheader("Brands Appearing on Multiple Platforms")
+# --- 다중 플랫폼 브랜드 ---
+st.subheader("다중 플랫폼 등록 브랜드")
 cross_brands = get_cross_platform_brands()
 if cross_brands.empty:
-    st.info("No brands found on multiple platforms yet.")
+    st.info("아직 여러 플랫폼에 등록된 브랜드가 없습니다.")
 else:
     st.dataframe(cross_brands, use_container_width=True, hide_index=True)
 
-# --- Average price comparison ---
-st.subheader("Average Price by Platform")
+# --- 플랫폼별 평균 가격 ---
+st.subheader("플랫폼별 평균 가격")
 avg_price = get_avg_price_by_platform()
 if avg_price.empty:
-    st.info("No pricing data available.")
+    st.info("가격 데이터가 없습니다.")
 else:
     fig = px.bar(
         avg_price,
-        x="platform",
-        y="avg_price",
-        color="platform",
+        x="플랫폼",
+        y="평균 가격",
+        color="플랫폼",
         text_auto=True,
-        title="Average Product Price by Platform (KRW)",
+        title="플랫폼별 평균 상품 가격 (원)",
     )
     fig.update_layout(showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
-# --- Average discount comparison ---
-st.subheader("Average Discount by Platform")
+# --- 플랫폼별 평균 할인율 ---
+st.subheader("플랫폼별 평균 할인율")
 avg_disc = get_avg_discount_by_platform()
 if avg_disc.empty:
-    st.info("No discount data available.")
+    st.info("할인 데이터가 없습니다.")
 else:
     fig = px.bar(
         avg_disc,
-        x="platform",
-        y="avg_discount",
-        color="platform",
+        x="플랫폼",
+        y="평균 할인율",
+        color="플랫폼",
         text_auto=True,
-        title="Average Discount by Platform (%)",
+        title="플랫폼별 평균 할인율 (%)",
     )
     fig.update_layout(showlegend=False)
     st.plotly_chart(fig, use_container_width=True)

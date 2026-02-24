@@ -67,16 +67,16 @@ class TwentynineCmScraper(BaseScraper):
     # Bestseller scraping
     # ------------------------------------------------------------------
 
-    def scrape_bestsellers(self) -> list[dict]:
-        """Fetch women's bestseller product rankings from the 29CM recommend API."""
-        logger.info(f"[{self.platform_name}] Fetching bestsellers from API...")
-
+    def _fetch_bestseller_page(
+        self, category_code: str, limit: int = 100, offset: int = 0
+    ) -> list[dict]:
+        """Fetch a single page of bestseller items for a category."""
         url = f"{RECOMMEND_API_BASE}{BEST_ITEMS_ENDPOINT}"
         params = {
-            "categoryList": WOMEN_CATEGORY_CODE,
+            "categoryList": category_code,
             "periodSort": "NOW",
-            "limit": "100",
-            "offset": "0",
+            "limit": str(limit),
+            "offset": str(offset),
         }
 
         data = self._api_get(url, params)
@@ -85,21 +85,104 @@ class TwentynineCmScraper(BaseScraper):
             logger.warning(f"[{self.platform_name}] API returned: {data.get('result')}")
             return []
 
-        content = data.get("data", {}).get("content", [])
-        items = []
+        return data.get("data", {}).get("content", [])
 
-        for rank, entry in enumerate(content, start=1):
+    def scrape_bestsellers(self) -> list[dict]:
+        """Fetch women's bestseller product rankings from the 29CM recommend API.
+
+        Paginates through the main women's category, then fetches subcategories
+        for additional coverage. Deduplicates by product URL.
+        """
+        logger.info(f"[{self.platform_name}] Fetching bestsellers from API...")
+
+        all_items: list[dict] = []
+        seen_urls: set[str] = set()
+        rank = 0
+
+        # --- Step 1: Paginate through main women's category (up to 300 items) ---
+        for offset in range(0, 300, 100):
+            logger.info(
+                f"[{self.platform_name}] Fetching main category offset={offset}..."
+            )
             try:
-                item = self._parse_product(entry, rank)
-                if item:
-                    items.append(item)
-            except Exception as e:
-                logger.debug(
-                    f"[{self.platform_name}] Skipping product at rank {rank}: {e}"
+                content = self._fetch_bestseller_page(
+                    WOMEN_CATEGORY_CODE, limit=100, offset=offset
                 )
+            except Exception as e:
+                logger.warning(
+                    f"[{self.platform_name}] Failed at offset {offset}: {e}"
+                )
+                break
 
-        logger.info(f"[{self.platform_name}] Extracted {len(items)} bestseller items")
-        return items
+            if not content:
+                logger.info(f"[{self.platform_name}] No more items at offset {offset}")
+                break
+
+            for entry in content:
+                rank += 1
+                try:
+                    item = self._parse_product(entry, rank)
+                    if item:
+                        url = item.get("product_url", "")
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            all_items.append(item)
+                except Exception as e:
+                    logger.debug(
+                        f"[{self.platform_name}] Skipping product at rank {rank}: {e}"
+                    )
+
+            self.random_delay()
+
+        # --- Step 2: Fetch subcategories and get their bestsellers ---
+        try:
+            categories = self.fetch_categories()
+        except Exception as e:
+            logger.warning(f"[{self.platform_name}] Failed to fetch categories: {e}")
+            categories = []
+
+        for cat in categories:
+            cat_code = cat.get("categoryCode", "")
+            cat_name = cat.get("categoryName", "")
+            if not cat_code or cat_code == WOMEN_CATEGORY_CODE:
+                continue
+
+            logger.info(
+                f"[{self.platform_name}] Fetching subcategory: {cat_name} ({cat_code})"
+            )
+            self.random_delay()
+
+            try:
+                content = self._fetch_bestseller_page(cat_code, limit=100, offset=0)
+            except Exception as e:
+                logger.warning(
+                    f"[{self.platform_name}] Failed subcategory {cat_name}: {e}"
+                )
+                continue
+
+            for entry in content:
+                rank += 1
+                try:
+                    item = self._parse_product(entry, rank)
+                    if item:
+                        url = item.get("product_url", "")
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            all_items.append(item)
+                except Exception as e:
+                    logger.debug(
+                        f"[{self.platform_name}] Skipping product at rank {rank}: {e}"
+                    )
+
+        # Re-number ranks sequentially after dedup
+        for i, item in enumerate(all_items, start=1):
+            item["rank"] = i
+
+        logger.info(
+            f"[{self.platform_name}] Extracted {len(all_items)} bestseller items "
+            f"(after dedup)"
+        )
+        return all_items
 
     def _parse_product(self, entry: dict, rank: int) -> Optional[dict]:
         """Parse a single product entry from the API response."""

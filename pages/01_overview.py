@@ -1,4 +1,4 @@
-"""Overview dashboard — KPIs, scraper health, platform breakdown."""
+"""개요 대시보드 — 주요 지표, 스크래퍼 상태, 플랫폼별 현황."""
 from __future__ import annotations
 
 import sqlite3
@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-DB_PATH = Path(__file__).resolve().parents[2] / "data" / "trends.db"
+DB_PATH = Path(__file__).resolve().parents[1] / "data" / "trends.db"
 
 
 def _conn() -> sqlite3.Connection:
@@ -16,7 +16,7 @@ def _conn() -> sqlite3.Connection:
 
 
 # ---------------------------------------------------------------------------
-# Cached queries
+# 캐시 쿼리
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=300)
@@ -44,8 +44,9 @@ def get_scrape_log() -> pd.DataFrame:
     conn = _conn()
     df = pd.read_sql_query(
         """
-        SELECT platform, status, items_collected, error_message,
-               ROUND(duration_seconds, 2) AS duration_seconds, scraped_at
+        SELECT platform AS '플랫폼', status AS '상태',
+               items_collected AS '수집 항목', error_message AS '오류 메시지',
+               ROUND(duration_seconds, 2) AS '소요 시간(초)', scraped_at AS '수집 시각'
         FROM scrape_log
         WHERE id IN (
             SELECT MAX(id) FROM scrape_log GROUP BY platform
@@ -63,10 +64,10 @@ def get_platform_breakdown() -> pd.DataFrame:
     conn = _conn()
     df = pd.read_sql_query(
         """
-        SELECT platform, COUNT(*) AS items
+        SELECT platform AS '플랫폼', COUNT(*) AS '상품 수'
         FROM bestseller_rankings
         GROUP BY platform
-        ORDER BY items DESC
+        ORDER BY COUNT(*) DESC
         """,
         conn,
     )
@@ -78,40 +79,40 @@ def get_platform_breakdown() -> pd.DataFrame:
 # UI
 # ---------------------------------------------------------------------------
 
-st.header("Overview")
+st.header("개요")
 
 kpi = get_kpi_data()
 log_df = get_scrape_log()
 
 last_status = "N/A"
 if not log_df.empty:
-    statuses = log_df["status"].unique()
-    last_status = "All OK" if all(s == "success" for s in statuses) else "Issues detected"
+    statuses = log_df["상태"].unique()
+    last_status = "정상" if all(s == "success" for s in statuses) else "오류 감지"
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total Products Tracked", kpi["total_products"])
-col2.metric("Total Keywords", kpi["total_keywords"])
-col3.metric("Platforms Active", kpi["active_platforms"])
-col4.metric("Last Scrape Status", last_status)
+col1.metric("추적 상품 수", kpi["total_products"])
+col2.metric("추적 키워드 수", kpi["total_keywords"])
+col3.metric("활성 플랫폼", kpi["active_platforms"])
+col4.metric("최근 스크래핑 상태", last_status)
 
-st.subheader("Scraper Health")
+st.subheader("스크래퍼 상태")
 if log_df.empty:
-    st.info("No scrape logs found yet.")
+    st.info("아직 스크래핑 로그가 없습니다.")
 else:
     st.dataframe(log_df, use_container_width=True, hide_index=True)
 
-st.subheader("Items per Platform")
+st.subheader("플랫폼별 상품 수")
 breakdown = get_platform_breakdown()
 if breakdown.empty:
-    st.info("No bestseller data yet.")
+    st.info("아직 베스트셀러 데이터가 없습니다.")
 else:
     fig = px.bar(
         breakdown,
-        x="platform",
-        y="items",
-        color="platform",
+        x="플랫폼",
+        y="상품 수",
+        color="플랫폼",
         text_auto=True,
-        title="Bestseller Items by Platform",
+        title="플랫폼별 베스트셀러 상품 수",
     )
     fig.update_layout(showlegend=False)
     st.plotly_chart(fig, use_container_width=True)

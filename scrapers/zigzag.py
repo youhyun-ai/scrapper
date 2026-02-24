@@ -56,8 +56,8 @@ query GetPageInfoForWeb(
 
 _GRAPHQL_URL = "https://api.zigzag.kr/api/2/graphql/GetPageInfoForWeb"
 
-# How many pages to fetch (36 items each). 3 pages = ~108 items.
-_MAX_PAGES = 3
+# How many pages to fetch (36 items each). 6 pages = ~216 items.
+_MAX_PAGES = 6
 
 
 class ZigzagScraper(BaseScraper):

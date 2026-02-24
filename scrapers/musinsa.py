@@ -33,18 +33,33 @@ class MusinsaScraper(BaseScraper):
         response.raise_for_status()
         return response.json()
 
+    # Major women's category codes for Musinsa rankings
+    _WOMEN_CATEGORIES = {
+        "000": "전체",         # all categories (already fetched)
+        "002": "아우터",       # outer
+        "001": "상의",         # tops
+        "003": "바지",         # pants/bottoms
+        "020": "원피스",       # dresses
+        "022": "스커트",       # skirts
+        "004": "가방",         # bags
+        "005": "신발",         # shoes
+    }
+
     # ------------------------------------------------------------------
     # Bestseller scraping via API
     # ------------------------------------------------------------------
 
-    def scrape_bestsellers(self) -> list:
-        """Fetch women's bestseller product rankings from the Musinsa API."""
-        logger.info(f"[{self.platform_name}] Fetching bestsellers from API...")
+    def _fetch_category_bestsellers(self, category_code: str, category_name: str) -> list:
+        """Fetch bestseller rankings for a single category."""
+        logger.info(
+            f"[{self.platform_name}] Fetching bestsellers for category "
+            f"{category_name} ({category_code})..."
+        )
 
         url = MUSINSA["product_section_url"]
         params = {
             "storeCode": "musinsa",
-            "categoryCode": "000",  # all categories
+            "categoryCode": category_code,
             "gf": "F",  # women
         }
 
@@ -66,14 +81,59 @@ class MusinsaScraper(BaseScraper):
                 try:
                     item = self._parse_product(entry, rank)
                     if item:
+                        # Tag category if not already set and this isn't "all"
+                        if category_code != "000" and not item.get("category"):
+                            item["category"] = category_name
                         items.append(item)
                 except Exception as e:
                     logger.debug(
                         f"[{self.platform_name}] Skipping product at rank {rank}: {e}"
                     )
 
-        logger.info(f"[{self.platform_name}] Extracted {len(items)} bestseller items")
+        logger.info(
+            f"[{self.platform_name}] Extracted {len(items)} items for "
+            f"{category_name} ({category_code})"
+        )
         return items
+
+    def scrape_bestsellers(self) -> list:
+        """Fetch women's bestseller product rankings from the Musinsa API.
+
+        Fetches "all categories" plus major women's category rankings,
+        then deduplicates by product URL.
+        """
+        logger.info(f"[{self.platform_name}] Fetching bestsellers from API...")
+
+        all_items = []
+        seen_urls: set[str] = set()
+
+        for cat_code, cat_name in self._WOMEN_CATEGORIES.items():
+            try:
+                items = self._fetch_category_bestsellers(cat_code, cat_name)
+                for item in items:
+                    url = item.get("product_url", "")
+                    if url and url in seen_urls:
+                        continue
+                    if url:
+                        seen_urls.add(url)
+                    all_items.append(item)
+            except Exception as e:
+                logger.warning(
+                    f"[{self.platform_name}] Failed to fetch category "
+                    f"{cat_name} ({cat_code}): {e}"
+                )
+
+            self.random_delay()
+
+        # Re-number ranks sequentially after dedup
+        for i, item in enumerate(all_items, start=1):
+            item["rank"] = i
+
+        logger.info(
+            f"[{self.platform_name}] Extracted {len(all_items)} bestseller items "
+            f"(after dedup across {len(self._WOMEN_CATEGORIES)} categories)"
+        )
+        return all_items
 
     def _parse_product(self, entry: dict, rank: int) -> Optional[dict]:
         """Parse a single PRODUCT_COLUMN entry from the API response."""
