@@ -1,0 +1,12 @@
+httpx[http2]>=0.27
+beautifulsoup4>=4.12
+lxml>=5.0
+playwright>=1.40
+pandas>=2.1
+streamlit>=1.30
+plotly>=5.18
+schedule>=1.2
+loguru>=0.7
+fake-useragent>=1.4
+tenacity>=8.2
+instaloader>=4.10
