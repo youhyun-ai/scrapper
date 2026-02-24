@@ -140,34 +140,6 @@ def find_keyword_platform_gaps(df: pd.DataFrame) -> list[dict]:
     return rows
 
 
-def find_price_opportunities(df: pd.DataFrame) -> pd.DataFrame:
-    """같은 브랜드의 플랫폼 간 가격 차이."""
-    branded = df[(df["brand"].fillna("").str.strip() != "") & (df["price"] > 0)]
-    multi = branded.groupby("brand").filter(lambda x: x["platform"].nunique() >= 2)
-    if multi.empty:
-        return pd.DataFrame()
-    stats = multi.groupby(["brand", "platform"])["price"].mean().unstack(fill_value=0)
-    rows = []
-    for brand in stats.index:
-        prices = {p: int(v) for p, v in stats.loc[brand].items() if v > 0}
-        if len(prices) < 2:
-            continue
-        cheapest = min(prices, key=prices.get)
-        priciest = max(prices, key=prices.get)
-        diff = prices[priciest] - prices[cheapest]
-        pct = diff / prices[cheapest] * 100
-        if diff > 5000:
-            rows.append({
-                "브랜드": brand,
-                "최저가 플랫폼": cheapest,
-                "최저가": f"{prices[cheapest]:,}원",
-                "최고가 플랫폼": priciest,
-                "최고가": f"{prices[priciest]:,}원",
-                "가격차": f"{diff:,}원",
-                "차이율": f"{pct:.0f}%",
-            })
-    return pd.DataFrame(rows).sort_values("차이율", ascending=False, key=lambda x: x.str.rstrip("%").astype(float)).head(20)
-
 
 # ---------------------------------------------------------------------------
 # UI
@@ -376,21 +348,7 @@ if gaps:
 else:
     st.info("키워드 분석에 충분한 데이터가 없습니다.")
 
-# ===== 7. 브랜드 가격 비교 =====
-st.subheader("동일 브랜드 플랫폼 간 가격 비교")
-st.caption("2개 이상 플랫폼에 입점한 브랜드의 평균 가격 차이")
-
-price_opp = find_price_opportunities(bs)
-if price_opp.empty:
-    st.info("비교할 수 있는 브랜드가 없습니다.")
-else:
-    st.dataframe(price_opp, use_container_width=True, hide_index=True)
-    st.markdown(
-        f"총 **{len(price_opp)}개** 브랜드에서 플랫폼 간 가격 차이가 발견되었습니다. "
-        "동일 브랜드라도 플랫폼에 따라 가격 정책이 다를 수 있으므로 입점 전략 수립 시 참고하세요."
-    )
-
-# ===== 8. 무신사 키워드 vs 실제 베스트셀러 =====
+# ===== 7. 무신사 키워드 vs 실제 베스트셀러 =====
 if not kw.empty:
     st.subheader("무신사 검색 키워드 ↔ 베스트셀러 연관성")
     st.caption("무신사 인기 검색 키워드가 실제 베스트셀러 상품명에 얼마나 등장하는지 분석")
