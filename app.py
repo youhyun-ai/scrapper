@@ -16,28 +16,11 @@ from database.db import init_db
 # DB가 없으면 빈 테이블 생성
 init_db()
 
-st.set_page_config(
-    page_title="패션 트렌드 분석기",
-    page_icon="\U0001F4C8",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+home = st.Page("pages/01_overview.py", title="개요", icon="\U0001F4CA", default=True)
+keywords = st.Page("pages/02_keywords.py", title="키워드", icon="\U0001F50D")
+bestsellers = st.Page("pages/03_bestsellers.py", title="베스트셀러", icon="\U0001F451")
+instagram = st.Page("pages/04_instagram.py", title="인스타그램", icon="\U0001F4F7")
+compare = st.Page("pages/05_compare.py", title="플랫폼 비교", icon="\U0001F504")
 
-st.title("패션 트렌드 분석기")
-st.markdown(
-    """
-    **무신사**, **29CM**, **W컨셉**, **지그재그** 실시간 패션 트렌드 추적 대시보드입니다.
-
-    사이드바에서 페이지를 선택하세요:
-
-    | 페이지 | 설명 |
-    |--------|------|
-    | **개요** | 주요 지표, 스크래퍼 상태, 플랫폼별 현황 |
-    | **키워드** | 트렌드 키워드 분석 및 순위 변동 |
-    | **베스트셀러** | 인기 상품, 브랜드 빈도, 가격 분석 |
-    | **인스타그램** | 해시태그 게시물 수 추적 |
-    | **플랫폼 비교** | 브랜드 교차 분석 및 가격 비교 |
-
-    데이터는 스크래핑 주기마다 갱신되며, 5분간 캐시됩니다.
-    """
-)
+pg = st.navigation([home, keywords, bestsellers, instagram, compare])
+pg.run()
