@@ -21,6 +21,7 @@ keywords = st.Page("pages/02_keywords.py", title="키워드", icon="\U0001F50D")
 bestsellers = st.Page("pages/03_bestsellers.py", title="베스트셀러", icon="\U0001F451")
 instagram = st.Page("pages/04_instagram.py", title="인스타그램", icon="\U0001F4F7")
 compare = st.Page("pages/05_compare.py", title="플랫폼 비교", icon="\U0001F504")
+analysis = st.Page("pages/06_analysis.py", title="데이터 분석", icon="\U0001F4A1")
 
-pg = st.navigation([home, keywords, bestsellers, instagram, compare])
+pg = st.navigation([home, keywords, bestsellers, instagram, compare, analysis])
 pg.run()
