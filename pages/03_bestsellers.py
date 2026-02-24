@@ -152,6 +152,13 @@ if bs_df.empty:
 
 st.subheader("상품 순위")
 st.dataframe(bs_df, use_container_width=True, hide_index=True)
+csv = bs_df.to_csv(index=False).encode("utf-8-sig")
+st.download_button(
+    label="CSV 다운로드",
+    data=csv,
+    file_name=f"베스트셀러_{selected_date_str}.csv",
+    mime="text/csv",
+)
 
 # --- 상위 10개 브랜드 ---
 st.subheader("상위 10개 브랜드 (전체 플랫폼, 전체 기간)")

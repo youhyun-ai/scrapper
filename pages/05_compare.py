@@ -86,6 +86,13 @@ if cross_brands.empty:
     st.info("아직 여러 플랫폼에 등록된 브랜드가 없습니다.")
 else:
     st.dataframe(cross_brands, use_container_width=True, hide_index=True)
+    csv = cross_brands.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        label="CSV 다운로드",
+        data=csv,
+        file_name="다중플랫폼_브랜드.csv",
+        mime="text/csv",
+    )
 
 # --- 플랫폼별 평균 가격 ---
 st.subheader("플랫폼별 평균 가격")

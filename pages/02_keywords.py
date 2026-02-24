@@ -316,6 +316,13 @@ else:
             pivot_score["총히트"] = pivot_hits.sum(axis=1)
             pivot_score = pivot_score.sort_values("총점", ascending=False)
             st.dataframe(pivot_score, use_container_width=True)
+            csv = pivot_score.to_csv(index=True).encode("utf-8-sig")
+            st.download_button(
+                label="CSV 다운로드",
+                data=csv,
+                file_name=f"키워드_가중점수_{selected_date_str}.csv",
+                mime="text/csv",
+            )
 
 # ---------------------------------------------------------------------------
 # 무신사 키워드 순위 (페이지 하단)
