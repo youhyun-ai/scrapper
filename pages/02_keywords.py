@@ -247,18 +247,18 @@ totals = get_product_keyword_totals(selected_date_str)
 if totals.empty:
     st.info("해당 날짜의 베스트셀러 데이터가 없습니다.")
 else:
-    # 최고 성과 키워드 3개: 히트당 점수가 가장 높은 키워드
+    # 최고 성과 키워드 3개: 상품당 점수가 가장 높은 키워드
     perf = totals.copy()
     perf["score_per_hit"] = perf["score"] / perf["hits"]
     top3 = perf.nlargest(3, "score_per_hit")
-    st.markdown("**최고 성과 키워드 TOP 3** (히트당 트렌드 점수 기준)")
+    st.markdown("**최고 성과 키워드 TOP 3** (상품당 트렌드 점수 기준)")
     tcols = st.columns(3)
     for i, row in enumerate(top3.itertuples()):
         with tcols[i]:
             st.metric(
                 label=row.keyword,
-                value=f"{row.score_per_hit:.0f} 점/히트",
-                help=f"점수: {row.score:,.0f} | 히트: {row.hits}",
+                value=f"{row.score_per_hit:.0f} 점/상품",
+                help=f"점수: {row.score:,.0f} | 상품: {row.hits}",
             )
 
     fig = px.bar(
@@ -272,7 +272,7 @@ else:
         hover_data={"keyword": True, "score": True, "hits": True},
     )
     fig.update_traces(
-        hovertemplate="<b>%{x}</b><br>트렌드 점수: %{y:,}<br>상품 히트: %{customdata[0]}<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>트렌드 점수: %{y:,}<br>상품 상품: %{customdata[0]}<extra></extra>",
         customdata=totals.head(20)[["hits"]].values,
     )
     fig.update_yaxes(title="트렌드 점수")
@@ -298,7 +298,7 @@ else:
                 hover_data={"keyword": True, "score": True, "hits": True, "platform": True},
             )
             fig2.update_traces(
-                hovertemplate="<b>%{x}</b> (%{customdata[0]})<br>트렌드 점수: %{y:,}<br>상품 히트: %{customdata[1]}<extra></extra>",
+                hovertemplate="<b>%{x}</b> (%{customdata[0]})<br>트렌드 점수: %{y:,}<br>상품 상품: %{customdata[1]}<extra></extra>",
                 customdata=filtered[["platform", "hits"]].values,
             )
             fig2.update_yaxes(title="트렌드 점수")
@@ -313,7 +313,7 @@ else:
                 index="keyword", columns="platform", values="hits", fill_value=0
             )
             pivot_score["총점"] = pivot_score.sum(axis=1)
-            pivot_score["총히트"] = pivot_hits.sum(axis=1)
+            pivot_score["총상품"] = pivot_hits.sum(axis=1)
             pivot_score = pivot_score.sort_values("총점", ascending=False)
             st.dataframe(pivot_score, use_container_width=True)
             csv = pivot_score.to_csv(index=True).encode("utf-8-sig")
