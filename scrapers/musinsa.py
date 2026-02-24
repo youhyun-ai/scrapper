@@ -45,18 +45,51 @@ class MusinsaScraper(BaseScraper):
         "005": "신발",         # shoes
     }
 
+    # Ranking theme sections – each section returns ~100 products per category.
+    # Fetching multiple sections with the same categories yields different
+    # (partially overlapping) product sets, letting us collect 800-1000 items.
+    _RANKING_SECTIONS = {
+        "199": "전체",         # overall ranking
+        "200": "NEW",          # new/trending ranking
+        "201": "급상승",       # fast-rising ranking
+    }
+
     # ------------------------------------------------------------------
     # Bestseller scraping via API
     # ------------------------------------------------------------------
 
-    def _fetch_category_bestsellers(self, category_code: str, category_name: str) -> list:
-        """Fetch bestseller rankings for a single category."""
+    def _build_section_url(self, section_id: str) -> str:
+        """Build the API URL for a given ranking section."""
+        api_base = MUSINSA["api_base"]
+        return f"{api_base}/sections/{section_id}"
+
+    def _fetch_category_bestsellers(
+        self,
+        category_code: str,
+        category_name: str,
+        section_id: str = "200",
+        section_label: str = "",
+    ) -> list:
+        """Fetch bestseller rankings for a single category and section.
+
+        Parameters
+        ----------
+        category_code : str
+            Musinsa category code (e.g. ``"001"`` for tops).
+        category_name : str
+            Human-readable category name.
+        section_id : str
+            Ranking theme section id (default ``"200"`` = NEW).
+        section_label : str
+            Human-readable label for the section (for logging).
+        """
+        label = f"{section_label}/{category_name}" if section_label else category_name
         logger.info(
-            f"[{self.platform_name}] Fetching bestsellers for category "
-            f"{category_name} ({category_code})..."
+            f"[{self.platform_name}] Fetching bestsellers for "
+            f"{label} (section={section_id}, cat={category_code})..."
         )
 
-        url = MUSINSA["product_section_url"]
+        url = self._build_section_url(section_id)
         params = {
             "storeCode": "musinsa",
             "categoryCode": category_code,
@@ -99,39 +132,51 @@ class MusinsaScraper(BaseScraper):
     def scrape_bestsellers(self) -> list:
         """Fetch women's bestseller product rankings from the Musinsa API.
 
-        Fetches "all categories" plus major women's category rankings,
-        then deduplicates by product URL.
+        Iterates over multiple ranking-theme *sections* (e.g. overall, NEW,
+        fast-rising) and within each section fetches all major women's
+        categories.  Products are deduplicated by URL so that the final list
+        contains ~800-1000 unique items.
         """
         logger.info(f"[{self.platform_name}] Fetching bestsellers from API...")
 
-        all_items = []
+        all_items: list[dict] = []
         seen_urls: set[str] = set()
+        request_count = 0
 
-        for cat_code, cat_name in self._WOMEN_CATEGORIES.items():
-            try:
-                items = self._fetch_category_bestsellers(cat_code, cat_name)
-                for item in items:
-                    url = item.get("product_url", "")
-                    if url and url in seen_urls:
-                        continue
-                    if url:
-                        seen_urls.add(url)
-                    all_items.append(item)
-            except Exception as e:
-                logger.warning(
-                    f"[{self.platform_name}] Failed to fetch category "
-                    f"{cat_name} ({cat_code}): {e}"
-                )
+        for sec_id, sec_label in self._RANKING_SECTIONS.items():
+            for cat_code, cat_name in self._WOMEN_CATEGORIES.items():
+                try:
+                    items = self._fetch_category_bestsellers(
+                        category_code=cat_code,
+                        category_name=cat_name,
+                        section_id=sec_id,
+                        section_label=sec_label,
+                    )
+                    for item in items:
+                        url = item.get("product_url", "")
+                        if url and url in seen_urls:
+                            continue
+                        if url:
+                            seen_urls.add(url)
+                        all_items.append(item)
+                except Exception as e:
+                    logger.warning(
+                        f"[{self.platform_name}] Failed to fetch "
+                        f"{sec_label}/{cat_name} (section={sec_id}, "
+                        f"cat={cat_code}): {e}"
+                    )
 
-            self.random_delay()
+                request_count += 1
+                self.random_delay()
 
         # Re-number ranks sequentially after dedup
         for i, item in enumerate(all_items, start=1):
             item["rank"] = i
 
+        total_requests = len(self._RANKING_SECTIONS) * len(self._WOMEN_CATEGORIES)
         logger.info(
             f"[{self.platform_name}] Extracted {len(all_items)} bestseller items "
-            f"(after dedup across {len(self._WOMEN_CATEGORIES)} categories)"
+            f"(after dedup across {total_requests} section/category combos)"
         )
         return all_items
 

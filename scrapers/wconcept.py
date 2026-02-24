@@ -49,17 +49,30 @@ class WConceptScraper(BaseScraper):
     # giving us broader product coverage after deduplication.
     _DATE_TYPES = ["daily", "weekly", "realtime"]
 
+    # Subcategory queries to supplement the main ALL fetch.
+    # Each entry is (depth1Code, depth1Name, dateType, pageSize).
+    # These categories have low overlap with the ALL listing, so they
+    # contribute many new unique products.  Codes discovered via the
+    # /display/api/best/v1/category endpoint (POST with domain body).
+    _SUBCATEGORY_QUERIES: list[tuple[str, str, str, int]] = [
+        ("10102", "가방", "daily", 200),
+        ("10103", "신발", "daily", 100),
+    ]
+
     def _fetch_bestseller_page(
-        self, date_type: str = "daily", page_size: int = 200
+        self,
+        date_type: str = "daily",
+        page_size: int = 200,
+        depth1_code: str = "ALL",
     ) -> list[dict]:
-        """Fetch one page of bestseller items for a given date type."""
+        """Fetch one page of bestseller items for a given date type and category."""
         payload = {
             "custNo": "0",
             "domain": "WOMEN",
             "genderType": "all",
             "dateType": date_type,
             "ageGroup": "all",
-            "depth1Code": "ALL",
+            "depth1Code": depth1_code,
             "depth2Code": "ALL",
             "pageSize": page_size,
             "pageNo": 1,
@@ -70,27 +83,56 @@ class WConceptScraper(BaseScraper):
         if data.get("result") != "SUCCESS":
             logger.error(
                 f"[{self.platform_name}] API returned non-success for "
-                f"dateType={date_type}: {data.get('message')}"
+                f"dateType={date_type}, depth1Code={depth1_code}: "
+                f"{data.get('message')}"
             )
             return []
 
         return data.get("data", {}).get("content", [])
 
+    def _ingest_content(
+        self,
+        content: list[dict],
+        all_items: list[dict],
+        seen_urls: set[str],
+        rank_counter: list[int],
+    ) -> None:
+        """Parse *content* entries and append new (unseen) items to *all_items*."""
+        for entry in content:
+            rank_counter[0] += 1
+            try:
+                item = self._parse_product(entry, rank_counter[0])
+                if item:
+                    url = item.get("product_url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        all_items.append(item)
+            except Exception as e:
+                logger.debug(
+                    f"[{self.platform_name}] Skipping product at rank "
+                    f"{rank_counter[0]}: {e}"
+                )
+
     def scrape_bestsellers(self) -> list[dict]:
         """Fetch women's bestseller product rankings from the W Concept API.
 
         Fetches rankings across multiple date types (daily, weekly, realtime)
-        to get broader product coverage. Deduplicates by product URL.
+        with depth1Code=ALL, then supplements with subcategory-specific queries
+        (bags, shoes) that surface products not present in the ALL listing.
+        Deduplicates by product URL to yield ~500-600 unique items.
         """
         logger.info(f"[{self.platform_name}] Fetching bestsellers from API...")
 
         all_items: list[dict] = []
         seen_urls: set[str] = set()
-        rank = 0
+        # Use a mutable container so _ingest_content can update it.
+        rank_counter = [0]
 
+        # --- Phase 1: ALL category across multiple date types ----------------
         for date_type in self._DATE_TYPES:
             logger.info(
-                f"[{self.platform_name}] Fetching dateType={date_type}..."
+                f"[{self.platform_name}] Fetching dateType={date_type}, "
+                f"depth1Code=ALL..."
             )
             try:
                 content = self._fetch_bestseller_page(date_type=date_type)
@@ -110,30 +152,53 @@ class WConceptScraper(BaseScraper):
                 f"[{self.platform_name}] API returned {len(content)} products "
                 f"for dateType={date_type}"
             )
+            self._ingest_content(content, all_items, seen_urls, rank_counter)
+            self.random_delay()
 
-            for entry in content:
-                rank += 1
-                try:
-                    item = self._parse_product(entry, rank)
-                    if item:
-                        url = item.get("product_url", "")
-                        if url and url not in seen_urls:
-                            seen_urls.add(url)
-                            all_items.append(item)
-                except Exception as e:
-                    logger.debug(
-                        f"[{self.platform_name}] Skipping product at rank {rank}: {e}"
-                    )
+        # --- Phase 2: subcategory queries for extra coverage -----------------
+        for depth1_code, depth1_name, date_type, page_size in self._SUBCATEGORY_QUERIES:
+            logger.info(
+                f"[{self.platform_name}] Fetching subcategory "
+                f"{depth1_name}({depth1_code}), dateType={date_type}, "
+                f"pageSize={page_size}..."
+            )
+            try:
+                content = self._fetch_bestseller_page(
+                    date_type=date_type,
+                    page_size=page_size,
+                    depth1_code=depth1_code,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[{self.platform_name}] Failed subcategory "
+                    f"{depth1_name}({depth1_code}): {e}"
+                )
+                continue
 
+            if not content:
+                logger.info(
+                    f"[{self.platform_name}] No items for subcategory "
+                    f"{depth1_name}({depth1_code})"
+                )
+                continue
+
+            before = len(all_items)
+            self._ingest_content(content, all_items, seen_urls, rank_counter)
+            added = len(all_items) - before
+            logger.info(
+                f"[{self.platform_name}] Subcategory {depth1_name}({depth1_code}) "
+                f"returned {len(content)} products, {added} new after dedup"
+            )
             self.random_delay()
 
         # Re-number ranks sequentially after dedup
         for i, item in enumerate(all_items, start=1):
             item["rank"] = i
 
+        query_count = len(self._DATE_TYPES) + len(self._SUBCATEGORY_QUERIES)
         logger.info(
             f"[{self.platform_name}] Extracted {len(all_items)} bestseller items "
-            f"(after dedup across {len(self._DATE_TYPES)} date types)"
+            f"(after dedup across {query_count} API queries)"
         )
         return all_items
 

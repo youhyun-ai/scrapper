@@ -56,8 +56,17 @@ query GetPageInfoForWeb(
 
 _GRAPHQL_URL = "https://api.zigzag.kr/api/2/graphql/GetPageInfoForWeb"
 
-# How many pages to fetch (36 items each). 6 pages = ~216 items.
-_MAX_PAGES = 6
+# How many pages to fetch per feed (36 items each).  The API currently
+# serves ~12 pages (~406 items) before has_next becomes False, so 15 is a
+# comfortable ceiling that will exhaust all available data.
+_MAX_PAGES = 15
+
+# Page-IDs to scrape.  Each feed is paginated independently; products are
+# deduplicated by catalog_product_id so overlapping feeds don't cause
+# duplicates.  At the time of writing every web_* feed returns the same
+# product pool (~406 items) but in a different order, so adding extra feeds
+# is cheap insurance against future divergence.
+_PAGE_IDS: list[str] = ["web_home", "web_ranking"]
 
 
 class ZigzagScraper(BaseScraper):
@@ -84,12 +93,14 @@ class ZigzagScraper(BaseScraper):
         })
         return base
 
-    def _fetch_page(self, cursor: Optional[str] = None) -> dict:
-        """Fetch one page of the home feed via GraphQL."""
+    def _fetch_page(
+        self, page_id: str = "web_home", cursor: Optional[str] = None
+    ) -> dict:
+        """Fetch one page of a feed via GraphQL."""
         payload = {
             "query": _GQL_QUERY,
             "variables": {
-                "page_id": "web_home",
+                "page_id": page_id,
                 "after": cursor,
                 "external_page_id": None,
             },
@@ -173,53 +184,79 @@ class ZigzagScraper(BaseScraper):
     # ------------------------------------------------------------------
 
     def scrape_bestsellers(self) -> list[dict]:
-        """Fetch bestseller products from Zigzag home feed (paginated)."""
+        """Fetch bestseller products from multiple Zigzag feeds (paginated).
+
+        Iterates over each feed in ``_PAGE_IDS``, paginates up to
+        ``_MAX_PAGES`` per feed, and deduplicates items by their
+        ``catalog_product_id`` so overlapping feeds don't produce
+        duplicate rows.
+        """
         logger.info(f"[{self.platform_name}] Fetching bestsellers from GraphQL API...")
 
         items: list[dict] = []
-        cursor: Optional[str] = None
+        seen_ids: set[str] = set()
         rank = 0
 
-        for page_num in range(_MAX_PAGES):
+        for page_id in _PAGE_IDS:
+            cursor: Optional[str] = None
             logger.info(
-                f"[{self.platform_name}] Fetching page {page_num + 1}/{_MAX_PAGES}..."
+                f"[{self.platform_name}] Scraping feed '{page_id}' "
+                f"(up to {_MAX_PAGES} pages)..."
             )
 
-            try:
-                data = self._fetch_page(cursor)
-            except Exception as exc:
-                logger.error(
-                    f"[{self.platform_name}] Failed to fetch page {page_num + 1}: {exc}"
+            for page_num in range(_MAX_PAGES):
+                logger.info(
+                    f"[{self.platform_name}] [{page_id}] "
+                    f"Fetching page {page_num + 1}/{_MAX_PAGES}..."
                 )
-                break
 
-            page_info = data.get("data", {}).get("page_info", {})
-            ui_items = page_info.get("ui_item_list", [])
-
-            for raw in ui_items:
-                if raw.get("__typename") != "UxGoodsCardItem":
-                    continue
-                rank += 1
                 try:
-                    item = self._parse_item(raw, rank)
-                    if item:
-                        items.append(item)
+                    data = self._fetch_page(page_id=page_id, cursor=cursor)
                 except Exception as exc:
-                    logger.debug(
-                        f"[{self.platform_name}] Skipping item at rank {rank}: {exc}"
+                    logger.error(
+                        f"[{self.platform_name}] [{page_id}] "
+                        f"Failed to fetch page {page_num + 1}: {exc}"
                     )
+                    break
 
-            cursor = page_info.get("end_cursor")
-            has_next = page_info.get("has_next", False)
+                page_info = data.get("data", {}).get("page_info", {})
+                ui_items = page_info.get("ui_item_list", [])
 
-            if not has_next or not cursor:
-                logger.info(f"[{self.platform_name}] No more pages available.")
-                break
+                for raw in ui_items:
+                    if raw.get("__typename") != "UxGoodsCardItem":
+                        continue
 
-            self.random_delay()
+                    # Deduplicate across feeds
+                    product_id = str(raw.get("catalog_product_id", ""))
+                    if product_id in seen_ids:
+                        continue
+                    seen_ids.add(product_id)
+
+                    rank += 1
+                    try:
+                        item = self._parse_item(raw, rank)
+                        if item:
+                            items.append(item)
+                    except Exception as exc:
+                        logger.debug(
+                            f"[{self.platform_name}] Skipping item at rank {rank}: {exc}"
+                        )
+
+                cursor = page_info.get("end_cursor")
+                has_next = page_info.get("has_next", False)
+
+                if not has_next or not cursor:
+                    logger.info(
+                        f"[{self.platform_name}] [{page_id}] "
+                        f"No more pages available."
+                    )
+                    break
+
+                self.random_delay()
 
         logger.info(
-            f"[{self.platform_name}] Extracted {len(items)} bestseller items"
+            f"[{self.platform_name}] Extracted {len(items)} bestseller items "
+            f"({len(seen_ids)} unique product IDs across {len(_PAGE_IDS)} feeds)"
         )
         return items
 
