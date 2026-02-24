@@ -6,6 +6,12 @@ from pathlib import Path
 
 import streamlit as st
 
+st.set_page_config(
+    page_title="패션 트렌드 분석기",
+    page_icon="\U0001F4CA",
+    layout="wide",
+)
+
 # 프로젝트 루트를 sys.path에 추가 (배포 환경 대응)
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
