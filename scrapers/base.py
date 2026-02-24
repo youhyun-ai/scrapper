@@ -74,6 +74,10 @@ class BaseScraper(ABC):
             logger.warning(f"[{self.platform_name}] No bestseller items to save")
             return
         with get_connection() as conn:
+            conn.execute(
+                "DELETE FROM bestseller_rankings WHERE platform = ? AND snapshot_date = ?",
+                (self.platform_name, self.snapshot_date),
+            )
             conn.executemany(
                 """INSERT INTO bestseller_rankings
                    (platform, rank, product_name, brand, price, original_price,
@@ -103,6 +107,10 @@ class BaseScraper(ABC):
             logger.warning(f"[{self.platform_name}] No keywords to save")
             return
         with get_connection() as conn:
+            conn.execute(
+                "DELETE FROM keyword_rankings WHERE platform = ? AND snapshot_date = ?",
+                (self.platform_name, self.snapshot_date),
+            )
             conn.executemany(
                 """INSERT INTO keyword_rankings
                    (platform, keyword, rank, category, snapshot_date)
