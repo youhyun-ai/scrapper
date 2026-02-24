@@ -1,10 +1,19 @@
 """패션 트렌드 분석기 — Streamlit 메인 진입점."""
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import streamlit as st
+
+# 프로젝트 루트를 sys.path에 추가 (배포 환경 대응)
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from database.db import init_db
 
-# DB가 없으면 빈 테이블 생성 (배포 환경 대응)
+# DB가 없으면 빈 테이블 생성
 init_db()
 
 st.set_page_config(
