@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import streamlit as st
+from database.db import init_db
+
+# DB가 없으면 빈 테이블 생성 (배포 환경 대응)
+init_db()
 
 st.set_page_config(
     page_title="패션 트렌드 분석기",
