@@ -149,8 +149,13 @@ def get_keyword_history(keyword: str) -> pd.DataFrame:
     return df
 
 
+# 키워드 매칭용 정규식 (한 번만 컴파일)
+_KW_PATTERN = re.compile("|".join(re.escape(kw) for kw in sorted(TREND_KEYWORDS, key=len, reverse=True)))
+
+
 @st.cache_data(ttl=300)
-def get_product_keyword_counts(snapshot_date: str) -> pd.DataFrame:
+def _build_keyword_scores(snapshot_date: str) -> pd.DataFrame:
+    """모든 키워드의 플랫폼별 점수를 한 번에 계산 (캐시)."""
     conn = get_conn()
     df = pd.read_sql_query(
         "SELECT platform, product_name, rank FROM bestseller_rankings WHERE snapshot_date = ?",
@@ -161,44 +166,46 @@ def get_product_keyword_counts(snapshot_date: str) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
     max_ranks = df.groupby("platform")["rank"].max().to_dict()
-    rows = []
-    for kw in TREND_KEYWORDS:
-        for plat in df["platform"].unique():
-            plat_df = df[df["platform"] == plat]
-            max_rank = max_ranks[plat]
-            hits = score = 0
-            for row in plat_df.itertuples():
-                if kw in row.product_name:
-                    hits += 1
-                    score += max_rank + 1 - row.rank
-            if score > 0:
-                rows.append({"keyword": kw, "platform": plat, "score": score, "hits": hits})
-    return pd.DataFrame(rows)
-
-
-@st.cache_data(ttl=300)
-def get_product_keyword_totals(snapshot_date: str) -> pd.DataFrame:
-    conn = get_conn()
-    df = pd.read_sql_query(
-        "SELECT product_name, rank, platform FROM bestseller_rankings WHERE snapshot_date = ?",
-        conn,
-        params=(snapshot_date,),
-    )
-    conn.close()
-    if df.empty:
+    top10_cutoffs = {p: int(m * 0.1) for p, m in max_ranks.items()}
+    data: dict = {}
+    for plat, max_rank, name, rank in zip(df["platform"], df["platform"].map(max_ranks), df["product_name"], df["rank"]):
+        normalized = (1 - rank / max_rank) * 100
+        if rank <= top10_cutoffs[plat]:
+            normalized *= 1.5
+        for m in _KW_PATTERN.finditer(name):
+            kw = m.group()
+            key = (kw, plat)
+            if key not in data:
+                data[key] = [0.0, 0]
+            data[key][0] += normalized
+            data[key][1] += 1
+    if not data:
         return pd.DataFrame()
-    max_ranks = df.groupby("platform")["rank"].max().to_dict()
-    scores: dict = {}
-    hits: dict = {}
-    for row in df.itertuples():
-        weight = max_ranks[row.platform] + 1 - row.rank
-        for kw in TREND_KEYWORDS:
-            if kw in row.product_name:
-                scores[kw] = scores.get(kw, 0) + weight
-                hits[kw] = hits.get(kw, 0) + 1
-    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    rows = [{"keyword": k, "score": v, "hits": hits[k]} for k, v in ranked]
+    rows = [{"keyword": k, "platform": p, "score": round(v[0], 1), "hits": v[1]}
+            for (k, p), v in data.items()]
     return pd.DataFrame(rows)
+
+
+def get_product_keyword_counts(snapshot_date: str) -> pd.DataFrame:
+    return _build_keyword_scores(snapshot_date)
+
+
+def get_product_keyword_totals(snapshot_date: str) -> pd.DataFrame:
+    per_platform = _build_keyword_scores(snapshot_date)
+    if per_platform.empty:
+        return pd.DataFrame()
+    # 키워드별 합산
+    grouped = per_platform.groupby("keyword").agg(
+        score=("score", "sum"),
+        hits=("hits", "sum"),
+        platforms=("platform", "nunique"),
+    ).reset_index()
+    # 크로스 플랫폼 보너스
+    grouped["score"] = grouped.apply(
+        lambda r: round(r["score"] * (1 + (r["platforms"] - 1) * 0.2), 1), axis=1
+    )
+    grouped = grouped.sort_values("score", ascending=False).reset_index(drop=True)
+    return grouped
 
 
 @st.cache_data(ttl=300)
@@ -261,7 +268,20 @@ if not platform_counts.empty:
 # ── Cross-platform trend keywords ──
 
 section_header("🔥", "크로스 플랫폼 트렌드 키워드")
-st.caption("베스트셀러 순위 기반 가중 점수 — 순위가 높을수록 더 많은 점수 반영")
+
+with st.expander("ℹ️ 점수 산정 방식"):
+    st.markdown("""
+**트렌드 점수**는 베스트셀러 상품명에 키워드가 포함된 횟수와 순위를 기반으로 산출됩니다.
+
+| 요소 | 설명 |
+|------|------|
+| **플랫폼 정규화** | 각 플랫폼 내 순위를 0\~100 점으로 정규화하여 플랫폼 간 공정 비교 |
+| **상위 10% 가산** | 플랫폼 내 상위 10% 상품은 1.5배 가중치 |
+| **크로스 플랫폼 보너스** | 여러 플랫폼에 등장할수록 가산 (2개=1.2x, 3개=1.4x, 4개=1.6x) |
+| **최소 등장 기준** | TOP 3 성과 키워드는 5개 이상 상품에 등장해야 선정 |
+
+`점/상품` = 총점 ÷ 등장 상품 수 (상품당 평균 트렌드 점수)
+""")
 
 # ── Category filter ──
 cat_options = list(KEYWORD_CATEGORIES.keys())
@@ -285,21 +305,24 @@ if not totals.empty:
 if totals.empty:
     st.info("해당 날짜의 베스트셀러 데이터가 없습니다." if active_label == "전체" else f"'{active_label}' 카테고리에 해당하는 트렌드 키워드가 없습니다.")
 else:
-    # Top 3 performance keywords
-    perf = totals.copy()
-    perf["score_per_hit"] = perf["score"] / perf["hits"]
-    top3 = perf.nlargest(3, "score_per_hit")
+    # Top 3 performance keywords (최소 5개 상품 등장)
+    perf = totals[totals["hits"] >= 5].copy()
+    if not perf.empty:
+        perf["score_per_hit"] = perf["score"] / perf["hits"]
+        top3 = perf.nlargest(3, "score_per_hit")
 
-    st.markdown("**최고 성과 키워드 TOP 3** — 상품당 트렌드 점수 기준")
-    tcols = st.columns(3)
-    medals = ["🥇", "🥈", "🥉"]
-    for i, row in enumerate(top3.itertuples()):
-        with tcols[i]:
-            st.markdown(hero_card(
-                f"{medals[i]} {row.keyword}",
-                f"{row.score_per_hit:.0f} 점/상품",
-                f"총점: {row.score:,} · {row.hits}개 상품",
-            ), unsafe_allow_html=True)
+        st.markdown("**최고 성과 키워드 TOP 3** — 상품당 트렌드 점수 기준")
+        tcols = st.columns(3)
+        medals = ["🥇", "🥈", "🥉"]
+        for i, row in enumerate(top3.itertuples()):
+            plat_count = row.platforms if hasattr(row, "platforms") else ""
+            plat_text = f" · {plat_count}개 플랫폼" if plat_count else ""
+            with tcols[i]:
+                st.markdown(hero_card(
+                    f"{medals[i]} {row.keyword}",
+                    f"{row.score_per_hit:.0f} 점/상품",
+                    f"총점: {row.score:,.0f} · {row.hits}개 상품{plat_text}",
+                ), unsafe_allow_html=True)
 
     # Top 20 bar chart
     fig = px.bar(
