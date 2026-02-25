@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ui_theme import (
     get_conn, platform_name, style_chart, hero_card, section_header,
-    PLATFORM_COLORS, CHART_COLORS,
+    PLATFORM_COLORS, PLATFORM_DISPLAY, CHART_COLORS,
 )
 
 # ---------------------------------------------------------------------------
@@ -60,9 +60,6 @@ KEYWORD_CATEGORIES = {
         "커브드팬츠", "코튼 팬츠",
         # 원피스/셋업
         "원피스", "어반드레스", "셋업", "트레이닝 셋업",
-        # 신발
-        "스니커즈", "운동화", "러닝화", "로퍼", "구두", "부츠", "워커",
-        "슬리퍼", "메리제인", "뮬", "크록스",
         # 가방
         "가방", "백팩", "숄더백", "크로스백", "토트백", "미니백", "에코백",
         "호보백", "파우치", "더플백",
@@ -188,12 +185,15 @@ def _build_keyword_scores(snapshot_date: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def get_product_keyword_counts(snapshot_date: str) -> pd.DataFrame:
-    return _build_keyword_scores(snapshot_date)
+def get_product_keyword_counts(snapshot_date: str, platforms: list[str] | None = None) -> pd.DataFrame:
+    df = _build_keyword_scores(snapshot_date)
+    if not df.empty and platforms:
+        df = df[df["platform"].isin(platforms)]
+    return df
 
 
-def get_product_keyword_totals(snapshot_date: str) -> pd.DataFrame:
-    per_platform = _build_keyword_scores(snapshot_date)
+def get_product_keyword_totals(snapshot_date: str, platforms: list[str] | None = None) -> pd.DataFrame:
+    per_platform = get_product_keyword_counts(snapshot_date, platforms)
     if per_platform.empty:
         return pd.DataFrame()
     # 키워드별 합산
@@ -202,7 +202,7 @@ def get_product_keyword_totals(snapshot_date: str) -> pd.DataFrame:
         hits=("hits", "sum"),
         platforms=("platform", "nunique"),
     ).reset_index()
-    # 크로스 플랫폼 보너스
+    # 크로스 플랫폼 보너스 (only when multiple platforms selected)
     grouped["score"] = grouped.apply(
         lambda r: round(r["score"] * (1 + (r["platforms"] - 1) * 0.2), 1), axis=1
     )
@@ -255,21 +255,47 @@ selected_date = st.date_input(
 )
 selected_date_str = selected_date.strftime("%Y-%m-%d")
 
-# ── Platform scan summary ──
+# ── Platform filter ──
 
 platform_counts = get_platform_counts(selected_date_str)
+# Combine platforms from bestsellers and keywords
+_bs_platforms = platform_counts["platform"].tolist() if not platform_counts.empty else []
+_kw_all = get_keywords_for_date(selected_date_str)
+_kw_platforms = _kw_all["platform"].unique().tolist() if not _kw_all.empty else []
+_available_platforms = list(dict.fromkeys(_bs_platforms + _kw_platforms))  # preserve order, dedupe
+if not _available_platforms:
+    _available_platforms = list(PLATFORM_DISPLAY.keys())
+
+_platform_options = {platform_name(p): p for p in _available_platforms}
+selected_platform_labels = st.multiselect(
+    "플랫폼 필터",
+    options=list(_platform_options.keys()),
+    default=list(_platform_options.keys()),
+    placeholder="플랫폼을 선택하세요",
+)
+selected_platforms = [_platform_options[lbl] for lbl in selected_platform_labels]
+
+if not selected_platforms:
+    st.warning("최소 1개 이상의 플랫폼을 선택해주세요.")
+    st.stop()
+
+# ── Platform scan summary ──
+
 if not platform_counts.empty:
-    total_items = int(platform_counts["items"].sum())
-    cols = st.columns(len(platform_counts) + 1)
-    with cols[0]:
-        st.metric("총 스캔 상품", f"{total_items:,}")
-    for i, row in enumerate(platform_counts.itertuples()):
-        with cols[i + 1]:
-            st.metric(platform_name(row.platform), f"{row.items:,}")
+    filtered_counts = platform_counts[platform_counts["platform"].isin(selected_platforms)]
+    if not filtered_counts.empty:
+        total_items = int(filtered_counts["items"].sum())
+        cols = st.columns(len(filtered_counts) + 1)
+        with cols[0]:
+            st.metric("총 스캔 상품", f"{total_items:,}")
+        for i, row in enumerate(filtered_counts.itertuples()):
+            with cols[i + 1]:
+                st.metric(platform_name(row.platform), f"{row.items:,}")
 
 # ── Cross-platform trend keywords ──
 
-section_header("🔥", "크로스 플랫폼 트렌드 키워드")
+_section_title = "크로스 플랫폼 트렌드 키워드" if len(selected_platforms) > 1 else f"{platform_name(selected_platforms[0])} 트렌드 키워드"
+section_header("🔥", _section_title)
 
 with st.expander("ℹ️ 점수 산정 방식"):
     st.markdown("""
@@ -304,7 +330,7 @@ else:
     active_keywords = KEYWORD_CATEGORIES[real_cat]
     active_label = real_cat
 
-totals = get_product_keyword_totals(selected_date_str)
+totals = get_product_keyword_totals(selected_date_str, selected_platforms)
 if not totals.empty:
     totals = totals[totals["keyword"].isin(active_keywords)]
 if totals.empty:
@@ -321,7 +347,7 @@ else:
         date_idx = all_dates.index(selected_date_str) if selected_date_str in all_dates else -1
         if date_idx >= 0 and date_idx < len(all_dates) - 1:
             prev_date = all_dates[date_idx + 1]
-            prev_totals = get_product_keyword_totals(prev_date)
+            prev_totals = get_product_keyword_totals(prev_date, selected_platforms)
             if not prev_totals.empty:
                 prev_totals = prev_totals[prev_totals["keyword"].isin(active_keywords)]
                 prev_perf = prev_totals[prev_totals["hits"] >= 5].copy()
@@ -416,7 +442,7 @@ else:
     st.plotly_chart(fig, use_container_width=True)
 
     # Platform breakdown
-    per_platform = get_product_keyword_counts(selected_date_str)
+    per_platform = get_product_keyword_counts(selected_date_str, selected_platforms)
     if not per_platform.empty:
         per_platform = per_platform[per_platform["keyword"].isin(active_keywords)]
         top_kws = totals.head(15)["keyword"].tolist()
@@ -425,6 +451,9 @@ else:
         if not filtered.empty:
             filtered = filtered.copy()
             filtered["platform_display"] = filtered["platform"].apply(platform_name)
+            # Map colors to match selected platforms
+            _active_plats = filtered["platform"].unique().tolist()
+            _color_map = {platform_name(p): PLATFORM_COLORS.get(p, "#6366f1") for p in _active_plats}
             fig2 = px.bar(
                 filtered,
                 x="keyword",
@@ -432,7 +461,7 @@ else:
                 color="platform_display",
                 barmode="group",
                 text_auto=True,
-                color_discrete_sequence=list(PLATFORM_COLORS.values()),
+                color_discrete_map=_color_map,
                 labels={"platform_display": "플랫폼", "keyword": "", "score": "트렌드 점수"},
             )
             fig2.update_layout(xaxis_tickangle=-45)
@@ -461,54 +490,85 @@ else:
                 mime="text/csv",
             )
 
-# ── Musinsa keyword rankings ──
+# ── Platform keyword rankings (API-sourced) ──
 
 st.divider()
-section_header("🔎", "무신사 인기 검색 키워드")
+_kw_title = "플랫폼 인기 검색 키워드" if len(selected_platforms) > 1 else f"{platform_name(selected_platforms[0])} 인기 검색 키워드"
+section_header("🔎", _kw_title)
 
 kw_df = get_keywords_for_date(selected_date_str)
 if kw_df.empty:
-    st.info(f"{selected_date_str} 무신사 키워드 데이터가 없습니다.")
+    st.info(f"{selected_date_str} 키워드 데이터가 없습니다.")
 else:
-    # Format as styled table
-    display_df = kw_df.copy()
-    display_df["변동"] = display_df["category"].apply(lambda x: _parse_fluctuation(x)[0])
-    display_df["순위"] = display_df["rank"]
-    display_df["키워드"] = display_df["keyword"]
-    display_df = display_df[["순위", "키워드", "변동"]]
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "순위": st.column_config.NumberColumn("순위", width="small"),
-            "키워드": st.column_config.TextColumn("키워드"),
-            "변동": st.column_config.TextColumn("변동", width="small"),
-        },
-    )
+    # Filter by selected platforms
+    kw_df = kw_df[kw_df["platform"].isin(selected_platforms)]
+    if kw_df.empty:
+        st.info("선택한 플랫폼에 키워드 데이터가 없습니다.")
+    else:
+        platforms_with_kw = kw_df["platform"].unique().tolist()
 
-    # Keyword history
-    st.markdown("")
-    section_header("📈", "키워드 순위 추이")
-    keyword_options = kw_df["keyword"].unique().tolist()
-    selected_kw = st.selectbox("키워드 선택", keyword_options, label_visibility="collapsed",
-                               help="순위 변동을 확인할 키워드를 선택하세요")
-
-    if selected_kw:
-        hist = get_keyword_history(selected_kw)
-        if hist.empty:
-            st.info("아직 충분한 과거 데이터가 없습니다.")
-        else:
-            fig = px.line(
-                hist,
-                x="snapshot_date",
-                y="rank",
-                color="platform",
-                markers=True,
-                title=f"\"{selected_kw}\" 순위 추이",
-                color_discrete_sequence=CHART_COLORS,
+        if len(platforms_with_kw) == 1:
+            # Single platform — show simple table
+            plat = platforms_with_kw[0]
+            plat_kw = kw_df[kw_df["platform"] == plat].copy()
+            plat_kw["변동"] = plat_kw["category"].apply(lambda x: _parse_fluctuation(x)[0])
+            plat_kw = plat_kw[["rank", "keyword", "변동"]].rename(columns={"rank": "순위", "keyword": "키워드"})
+            st.dataframe(
+                plat_kw,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "순위": st.column_config.NumberColumn("순위", width="small"),
+                    "키워드": st.column_config.TextColumn("키워드"),
+                    "변동": st.column_config.TextColumn("변동", width="small"),
+                },
             )
-            fig.update_yaxes(autorange="reversed", title="순위 (낮을수록 좋음)")
-            fig.update_xaxes(title="날짜")
-            style_chart(fig, height=380)
-            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Multiple platforms — show tabs
+            tabs = st.tabs([platform_name(p) for p in platforms_with_kw])
+            for tab, plat in zip(tabs, platforms_with_kw):
+                with tab:
+                    plat_kw = kw_df[kw_df["platform"] == plat].copy()
+                    plat_kw["변동"] = plat_kw["category"].apply(lambda x: _parse_fluctuation(x)[0])
+                    plat_kw = plat_kw[["rank", "keyword", "변동"]].rename(columns={"rank": "순위", "keyword": "키워드"})
+                    st.dataframe(
+                        plat_kw,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "순위": st.column_config.NumberColumn("순위", width="small"),
+                            "키워드": st.column_config.TextColumn("키워드"),
+                            "변동": st.column_config.TextColumn("변동", width="small"),
+                        },
+                    )
+
+        # Keyword history
+        st.markdown("")
+        section_header("📈", "키워드 순위 추이")
+        keyword_options = kw_df["keyword"].unique().tolist()
+        selected_kw = st.selectbox("키워드 선택", keyword_options, label_visibility="collapsed",
+                                   help="순위 변동을 확인할 키워드를 선택하세요")
+
+        if selected_kw:
+            hist = get_keyword_history(selected_kw)
+            if not hist.empty:
+                # Filter history to selected platforms
+                hist = hist[hist["platform"].isin(selected_platforms)]
+            if hist.empty:
+                st.info("아직 충분한 과거 데이터가 없습니다.")
+            else:
+                hist["platform_display"] = hist["platform"].apply(platform_name)
+                fig = px.line(
+                    hist,
+                    x="snapshot_date",
+                    y="rank",
+                    color="platform_display",
+                    markers=True,
+                    title=f"\"{selected_kw}\" 순위 추이",
+                    color_discrete_sequence=[PLATFORM_COLORS.get(p, c) for p, c in zip(selected_platforms, CHART_COLORS)],
+                    labels={"platform_display": "플랫폼"},
+                )
+                fig.update_yaxes(autorange="reversed", title="순위 (낮을수록 좋음)")
+                fig.update_xaxes(title="날짜")
+                style_chart(fig, height=380)
+                st.plotly_chart(fig, use_container_width=True)
