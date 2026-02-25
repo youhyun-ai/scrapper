@@ -39,7 +39,9 @@ def _parse_fluctuation(cat):
 KEYWORD_CATEGORIES = {
     "색상": [
         "블랙", "화이트", "베이지", "그레이", "카키", "네이비", "브라운",
-        "파스텔", "민트",
+        "파스텔", "민트", "아이보리", "버건디", "블루", "핑크",
+        "레드", "옐로우", "퍼플", "라벤더", "올리브", "크림", "차콜",
+        "카멜", "코발트", "스카이블루", "와인",
     ],
     "아이템": [
         # 상의
@@ -284,20 +286,23 @@ with st.expander("ℹ️ 점수 산정 방식"):
 """)
 
 # ── Category filter ──
-cat_options = list(KEYWORD_CATEGORIES.keys())
-selected_cat = st.pills(
+cat_options_raw = list(KEYWORD_CATEGORIES.keys())
+cat_labels = {f"{cat} ({len(KEYWORD_CATEGORIES[cat])})": cat for cat in cat_options_raw}
+all_label = f"전체 ({len(TREND_KEYWORDS)})"
+selected_pill = st.pills(
     "카테고리 필터",
-    ["전체"] + cat_options,
-    default="전체",
+    [all_label] + list(cat_labels.keys()),
+    default=all_label,
     label_visibility="collapsed",
 )
 
-if selected_cat == "전체" or selected_cat is None:
+if selected_pill == all_label or selected_pill is None:
     active_keywords = TREND_KEYWORDS
     active_label = "전체"
 else:
-    active_keywords = KEYWORD_CATEGORIES[selected_cat]
-    active_label = selected_cat
+    real_cat = cat_labels[selected_pill]
+    active_keywords = KEYWORD_CATEGORIES[real_cat]
+    active_label = real_cat
 
 totals = get_product_keyword_totals(selected_date_str)
 if not totals.empty:
@@ -311,17 +316,54 @@ else:
         perf["score_per_hit"] = perf["score"] / perf["hits"]
         top3 = perf.nlargest(3, "score_per_hit")
 
+        # 전날 데이터 비교
+        prev_perf = None
+        date_idx = all_dates.index(selected_date_str) if selected_date_str in all_dates else -1
+        if date_idx >= 0 and date_idx < len(all_dates) - 1:
+            prev_date = all_dates[date_idx + 1]
+            prev_totals = get_product_keyword_totals(prev_date)
+            if not prev_totals.empty:
+                prev_totals = prev_totals[prev_totals["keyword"].isin(active_keywords)]
+                prev_perf = prev_totals[prev_totals["hits"] >= 5].copy()
+                if not prev_perf.empty:
+                    prev_perf["score_per_hit"] = prev_perf["score"] / prev_perf["hits"]
+                    prev_perf["prev_rank"] = range(1, len(prev_perf.nlargest(len(prev_perf), "score_per_hit")) + 1)
+                    prev_perf = prev_perf.nlargest(len(prev_perf), "score_per_hit")
+                    prev_perf["prev_rank"] = range(1, len(prev_perf) + 1)
+
         st.markdown("**최고 성과 키워드 TOP 3** — 상품당 트렌드 점수 기준")
         tcols = st.columns(3)
         medals = ["🥇", "🥈", "🥉"]
         for i, row in enumerate(top3.itertuples()):
             plat_count = row.platforms if hasattr(row, "platforms") else ""
             plat_text = f" · {plat_count}개 플랫폼" if plat_count else ""
+
+            # 전날 비교
+            change_text = ""
+            if prev_perf is not None and not prev_perf.empty:
+                prev_row = prev_perf[prev_perf["keyword"] == row.keyword]
+                if not prev_row.empty:
+                    prev_sph = prev_row.iloc[0]["score_per_hit"]
+                    prev_rank = int(prev_row.iloc[0]["prev_rank"])
+                    diff = row.score_per_hit - prev_sph
+                    if diff > 0:
+                        change_text = f"전일 대비 ▲{diff:.0f} (전일 {prev_rank}위)"
+                    elif diff < 0:
+                        change_text = f"전일 대비 ▼{abs(diff):.0f} (전일 {prev_rank}위)"
+                    else:
+                        change_text = f"전일과 동일 (전일 {prev_rank}위)"
+                else:
+                    change_text = "신규 진입"
+
+            subtitle = f"총점: {row.score:,.0f} · {row.hits}개 상품{plat_text}"
+            if change_text:
+                subtitle += f"<br>{change_text}"
+
             with tcols[i]:
                 st.markdown(hero_card(
                     f"{medals[i]} {row.keyword}",
                     f"{row.score_per_hit:.0f} 점/상품",
-                    f"총점: {row.score:,.0f} · {row.hits}개 상품{plat_text}",
+                    subtitle,
                 ), unsafe_allow_html=True)
 
     # Top 20 bar chart
