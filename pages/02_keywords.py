@@ -196,7 +196,7 @@ def get_product_keyword_totals(snapshot_date: str) -> pd.DataFrame:
             if kw in row.product_name:
                 scores[kw] = scores.get(kw, 0) + weight
                 hits[kw] = hits.get(kw, 0) + 1
-    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:30]
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     rows = [{"keyword": k, "score": v, "hits": hits[k]} for k, v in ranked]
     return pd.DataFrame(rows)
 
