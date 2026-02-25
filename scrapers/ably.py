@@ -83,19 +83,25 @@ class AblyScraper(BaseScraper):
 
             def _on_response(response):
                 url = response.url
-                if (
-                    "api.a-bly.com/api/v2/screens/TODAY" in url
-                    and response.status == 200
-                    and not captured
-                ):
-                    captured["headers"] = dict(response.request.headers)
+                if "api.a-bly.com" in url and response.status == 200:
+                    try:
+                        req_headers = dict(response.request.headers)
+                        # Prefer screens/TODAY headers but accept any API call
+                        if "screens/TODAY" in url or not captured:
+                            captured["headers"] = req_headers
+                    except Exception:
+                        pass
 
             page.on("response", _on_response)
 
             logger.info(f"[{self.platform_name}] Loading home page for auth...")
             try:
                 page.goto(self.ranking_url, wait_until="domcontentloaded", timeout=60000)
-                page.wait_for_timeout(5000)
+                # Wait long enough for API calls to fire
+                page.wait_for_timeout(8000)
+                # Scroll once to trigger more API calls if needed
+                page.evaluate("window.scrollBy(0, window.innerHeight)")
+                page.wait_for_timeout(3000)
             except Exception as e:
                 logger.warning(f"[{self.platform_name}] Home page load error: {e}")
 
