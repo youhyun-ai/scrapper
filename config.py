@@ -46,6 +46,15 @@ ZIGZAG = {
 ABLY = {
     "base_url": "https://m.a-bly.com",
     "ranking_url": "https://m.a-bly.com/ranking",
+    "search_url": "https://m.a-bly.com/search",
+    # Category tabs on ranking page (tab index → label)
+    "categories": {
+        "전체": "",
+        "의류": "clothing",
+        "신발": "shoes",
+        "가방": "bag",
+        "악세서리": "accessory",
+    },
 }
 
 # --- Instagram ---
