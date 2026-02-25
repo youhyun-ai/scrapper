@@ -85,10 +85,15 @@ class AblyScraper(BaseScraper):
             url = response.url
             if "api.a-bly.com" not in url:
                 return
-            if not any(kw in url for kw in ("goods", "ranking", "product", "best", "home")):
+            if not any(kw in url for kw in (
+                "goods", "ranking", "product", "best", "home",
+                "category", "display", "feed", "recommend", "pick",
+                "screens",
+            )):
                 return
             try:
-                if response.status == 200 and "json" in (response.headers.get("content-type", "")):
+                content_type = response.headers.get("content-type", "")
+                if response.status == 200 and "json" in content_type:
                     data = response.json()
                     api_items.append({"url": url, "data": data})
                     logger.debug(f"[{self.platform_name}] Captured API: {url}")
@@ -101,7 +106,9 @@ class AblyScraper(BaseScraper):
 
             logger.info(f"[{self.platform_name}] Navigating to {self.ranking_url}")
             try:
-                page.goto(self.ranking_url, wait_until="networkidle", timeout=60000)
+                page.goto(self.ranking_url, wait_until="domcontentloaded", timeout=60000)
+                # Wait for dynamic content to load after initial DOM
+                page.wait_for_timeout(5000)
             except Exception as e:
                 logger.warning(f"[{self.platform_name}] Initial load timeout/error: {e}")
 
@@ -168,94 +175,71 @@ class AblyScraper(BaseScraper):
     # ------------------------------------------------------------------
 
     def _parse_api_responses(self, api_items: list[dict]) -> list[dict]:
-        """Try to extract product data from captured API responses."""
+        """Extract product data from captured API responses.
+
+        Ably's main feed uses the ``/api/v2/screens/TODAY/`` endpoint which
+        returns a ``components`` list.  Each component with a ``CARD_LIST``
+        item_list type contains product items nested as::
+
+            component -> entity -> item_list[] -> item_entity -> item
+        """
         items: list[dict] = []
         seen: set[str] = set()
         rank = 0
 
         for captured in api_items:
             data = captured["data"]
-            # Try common response shapes
-            products = self._extract_product_list(data)
+            products = self._extract_goods_from_screens(data)
 
             for prod in products:
-                if not isinstance(prod, dict):
-                    continue
-                name = (
-                    prod.get("goods_name")
-                    or prod.get("name")
-                    or prod.get("product_name")
-                    or prod.get("title")
-                    or ""
-                )
+                sno = str(prod.get("sno") or prod.get("goods_sno") or "")
+                name = prod.get("name") or prod.get("goods_name") or ""
                 if not name:
                     continue
 
-                product_id = str(
-                    prod.get("goods_sno")
-                    or prod.get("goods_no")
-                    or prod.get("id")
-                    or prod.get("product_id")
-                    or name
-                )
+                product_id = sno or name
                 if product_id in seen:
                     continue
                 seen.add(product_id)
 
                 rank += 1
-                price = (
-                    prod.get("sale_price")
-                    or prod.get("price")
-                    or prod.get("final_price")
-                )
-                original_price = (
-                    prod.get("origin_price")
-                    or prod.get("original_price")
-                    or prod.get("normal_price")
-                )
+
+                # Price can be a plain int or nested in first_page_rendering
+                fpr = prod.get("first_page_rendering", {}) or {}
+                raw_price = prod.get("price")
+                if isinstance(raw_price, dict):
+                    sale_price = raw_price.get("sale_price") or raw_price.get("price")
+                    original_price = raw_price.get("origin_price") or raw_price.get("original_price")
+                else:
+                    sale_price = raw_price or fpr.get("price")
+                    original_price = fpr.get("original_price")
+
                 discount = (
                     prod.get("discount_rate")
-                    or prod.get("discount_pct")
-                    or prod.get("discount_percent")
+                    or fpr.get("discount_rate")
                 )
-                if not discount and original_price and price and original_price > price:
-                    discount = round((1 - price / original_price) * 100)
+                if not discount and original_price and sale_price and original_price > sale_price:
+                    discount = round((1 - sale_price / original_price) * 100)
 
                 brand = (
                     prod.get("market_name")
-                    or prod.get("brand")
-                    or prod.get("brand_name")
-                    or prod.get("shop_name")
+                    or fpr.get("market_name")
                     or ""
                 )
                 image_url = (
-                    prod.get("image_url")
-                    or prod.get("thumbnail")
-                    or prod.get("img_url")
-                    or prod.get("first_img")
+                    prod.get("image")
+                    or prod.get("image_url")
+                    or fpr.get("cover_image")
                     or ""
                 )
-                product_url = (
-                    prod.get("product_url")
-                    or prod.get("url")
-                    or ""
-                )
-                if not product_url and product_id.isdigit():
-                    product_url = f"{self.base_url}/goods/{product_id}"
-
-                # Try to extract category
-                category = (
-                    prod.get("category_name")
-                    or prod.get("category")
-                    or prod.get("cat_name")
-                    or ""
-                )
+                category = prod.get("category_name") or ""
+                product_url = f"{self.base_url}/goods/{sno}" if sno else ""
 
                 items.append({
                     "rank": rank,
                     "product_name": name.strip(),
                     "brand": brand.strip() if brand else "",
-                    "price": int(price) if price else None,
+                    "price": int(sale_price) if sale_price else None,
                     "original_price": int(original_price) if original_price else None,
                     "discount_pct": int(discount) if discount else None,
                     "category": category,
@@ -266,23 +250,48 @@ class AblyScraper(BaseScraper):
         return items
 
     @staticmethod
-    def _extract_product_list(data) -> list:
-        """Extract a list of product dicts from various API response shapes."""
-        if isinstance(data, list):
-            return data
+    def _extract_goods_from_screens(data) -> list[dict]:
+        """Extract flat list of goods dicts from Ably screens API response.
+
+        Walks through ``components`` → ``entity`` → ``item_list`` →
+        ``item_entity`` → ``item`` to collect product dicts.
+        """
         if not isinstance(data, dict):
             return []
-        # Try nested paths
-        for key in ("data", "result", "goods", "items", "products", "content"):
-            val = data.get(key)
-            if isinstance(val, list) and len(val) > 0:
-                return val
-            if isinstance(val, dict):
-                for subkey in ("list", "items", "goods", "products", "content"):
-                    subval = val.get(subkey)
-                    if isinstance(subval, list) and len(subval) > 0:
-                        return subval
-        return []
+
+        components = data.get("components", [])
+        if not isinstance(components, list):
+            return []
+
+        goods: list[dict] = []
+        for comp in components:
+            comp_type = comp.get("type", {})
+            if not isinstance(comp_type, dict):
+                continue
+            item_list_type = comp_type.get("item_list", "")
+            # Only process component types that contain product cards
+            if not any(kw in item_list_type for kw in ("CARD_LIST", "GOODS_LIST")):
+                continue
+
+            entity = comp.get("entity", {})
+            if not isinstance(entity, dict):
+                continue
+            item_list = entity.get("item_list", [])
+            if not isinstance(item_list, list):
+                continue
+
+            for entry in item_list:
+                if not isinstance(entry, dict):
+                    continue
+                # Navigate: item_entity -> item
+                ie = entry.get("item_entity", {})
+                item = ie.get("item") if isinstance(ie, dict) else None
+                if not item:
+                    item = entry.get("item")
+                if isinstance(item, dict) and item.get("sno"):
+                    goods.append(item)
+
+        return goods
 
     def _parse_dom(self, page) -> list[dict]:
         """Parse product data from the rendered DOM as a fallback."""
@@ -411,12 +420,10 @@ class AblyScraper(BaseScraper):
 
             logger.info(f"[{self.platform_name}] Navigating to {self.search_url}")
             try:
-                page.goto(self.search_url, wait_until="networkidle", timeout=60000)
+                page.goto(self.search_url, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(5000)
             except Exception as e:
                 logger.warning(f"[{self.platform_name}] Search page load error: {e}")
-
-            # Wait a bit for dynamic content
-            page.wait_for_timeout(3000)
 
             # Try clicking on search input to trigger keyword suggestions
             search_selectors = [
@@ -463,6 +470,10 @@ class AblyScraper(BaseScraper):
 
         for captured in api_items:
             data = captured["data"]
+            logger.debug(
+                f"[{self.platform_name}] Keyword API response from {captured['url']}: "
+                f"keys={list(data.keys()) if isinstance(data, dict) else type(data).__name__}"
+            )
             keyword_list = self._extract_keyword_list(data)
 
             for kw in keyword_list:
@@ -510,7 +521,8 @@ class AblyScraper(BaseScraper):
             return []
         # Try keyword-specific keys first
         for key in (
-            "keywords", "popular_keywords", "trending_keywords",
+            "popular_queries", "queries", "keywords",
+            "popular_keywords", "trending_keywords",
             "hot_keywords", "recommend_keywords", "search_keywords",
             "suggestions", "popular", "trending", "ranks",
             "data", "result", "items", "list", "content",
@@ -520,7 +532,8 @@ class AblyScraper(BaseScraper):
                 return val
             if isinstance(val, dict):
                 for subkey in (
-                    "keywords", "list", "items", "popular", "trending",
+                    "popular_queries", "queries", "keywords",
+                    "list", "items", "popular", "trending",
                     "ranks", "content",
                 ):
                     subval = val.get(subkey)
@@ -529,41 +542,41 @@ class AblyScraper(BaseScraper):
         return []
 
     def _parse_keyword_dom(self, page) -> list[dict]:
-        """Extract trending keywords from the rendered DOM."""
+        """Extract trending keywords from the rendered DOM.
+
+        Ably's search page shows "인기 검색어" as a list of ``<li>`` elements,
+        each containing a rank number ``<p>`` and a keyword ``<p>``.  The CSS
+        class names are styled-components hashes so we match by structure.
+        """
         keywords: list[dict] = []
         seen: set[str] = set()
 
-        # Selectors for keyword/trending sections
+        # Ably-specific: keyword list items contain two <p> tags
+        # (rank number + keyword text) inside <li> elements.
+        # Try the most specific selectors first, then broaden.
         keyword_selectors = [
+            # Ably's actual structure: <ul> with <li> children in search page
+            "ul li p.typography.typography__body2",
+            # Broader: any list items in the main content
+            "main ul li",
+            "ul li",
+            # Generic fallbacks
             "[class*='keyword']",
             "[class*='popular']",
-            "[class*='trending']",
-            "[class*='hot']",
-            "[class*='rank'] a",
             "[class*='search'] li",
-            "[class*='suggest']",
-            "[class*='recommend']",
+            "ol li",
         ]
 
         elements = []
         for sel in keyword_selectors:
             found = page.query_selector_all(sel)
-            if len(found) >= 3:
+            if len(found) >= 5:
                 elements = found
                 logger.info(
                     f"[{self.platform_name}] Found {len(found)} keyword elements "
                     f"with selector '{sel}'"
                 )
                 break
-
-        if not elements:
-            # Try a broader approach: look for numbered lists
-            elements = page.query_selector_all("ol li, [class*='rank'] span")
-            if elements:
-                logger.info(
-                    f"[{self.platform_name}] Found {len(elements)} elements "
-                    f"via broad list selector"
-                )
 
         rank = 0
         for el in elements:
@@ -573,8 +586,17 @@ class AblyScraper(BaseScraper):
                 text = re.sub(r"^\d+[\.\s]*", "", text).strip()
                 if not text or len(text) < 2 or text in seen:
                     continue
-                # Skip elements that look like prices or non-keyword content
+                # Skip elements that are just numbers (rank indicators)
+                if re.match(r"^\d+$", text):
+                    continue
+                # Skip elements that look like prices
                 if re.match(r"^[\d,]+원?$", text):
+                    continue
+                # Skip age-range filter labels
+                if re.match(r"^\d+대", text) or text in ("전체", "30대 이상"):
+                    continue
+                # Skip UI elements
+                if text in ("앱에서 보기", "홈으로 이동", "보러가기", "완료"):
                     continue
                 seen.add(text)
                 rank += 1

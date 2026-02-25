@@ -45,7 +45,7 @@ ZIGZAG = {
 
 ABLY = {
     "base_url": "https://m.a-bly.com",
-    "ranking_url": "https://m.a-bly.com/ranking",
+    "ranking_url": "https://m.a-bly.com",  # home page serves as ranking feed
     "search_url": "https://m.a-bly.com/search",
     # Category tabs on ranking page (tab index → label)
     "categories": {
