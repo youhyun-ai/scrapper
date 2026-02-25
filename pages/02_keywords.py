@@ -36,18 +36,59 @@ def _parse_fluctuation(cat):
     return "-", "same"
 
 
-TREND_KEYWORDS = [
-    "크롭", "와이드", "오버사이즈", "슬림", "루즈", "배기", "미니", "롱", "숏",
-    "하이웨이스트", "로우라이즈", "플레어", "A라인", "박시",
-    "레이어드", "셔링", "플리츠", "프릴", "리본", "스트링", "컷아웃", "슬릿",
-    "니트", "데님", "레더", "퍼", "트위드", "벨벳", "린넨", "코듀로이",
-    "카디건", "블라우스", "후드", "맨투맨", "자켓", "패딩", "코트",
-    "원피스", "스커트", "팬츠", "조거", "트랙", "바이커",
-    "블랙", "화이트", "베이지", "그레이", "카키", "네이비", "브라운",
-    "파스텔", "체크", "스트라이프", "플로럴", "도트",
-    "빈티지", "레트로", "미니멀", "캐주얼", "스포티", "시티보이", "고프코어",
-    "발레코어", "올드머니",
-]
+KEYWORD_CATEGORIES = {
+    "색상": [
+        "블랙", "화이트", "베이지", "그레이", "카키", "네이비", "브라운",
+        "파스텔", "민트",
+    ],
+    "아이템": [
+        # 상의
+        "니트", "카디건", "가디건", "블라우스", "후드", "후드티", "맨투맨",
+        "자켓", "패딩", "코트", "셔츠", "체크셔츠", "나시", "반팔", "반팔티",
+        "롱슬리브", "슬리브", "티셔츠", "브이넥", "집업", "반집업", "후드집업",
+        "블루종", "봄버자켓", "항공점퍼", "점퍼", "야상", "아노락",
+        "가죽자켓", "레더자켓", "스웨이드자켓", "청자켓",
+        "트위드 자켓", "워크자켓", "져지", "플리스", "후리스", "바람막이",
+        "윈드브레이커", "경량패딩", "무스탕", "퍼자켓", "패딩조끼", "아우터",
+        "숏코트", "하프코트",
+        # 하의
+        "팬츠", "바지", "스커트", "치마", "치마바지", "청바지", "데님",
+        "슬랙스", "조거팬츠", "카고팬츠", "와이드팬츠", "트레이닝 바지",
+        "트레이닝 팬츠", "스웻팬츠", "반바지", "레깅스", "부츠컷",
+        "커브드팬츠", "코튼 팬츠",
+        # 원피스/셋업
+        "원피스", "어반드레스", "셋업", "트레이닝 셋업",
+        # 신발
+        "스니커즈", "운동화", "러닝화", "로퍼", "구두", "부츠", "워커",
+        "슬리퍼", "메리제인", "뮬", "크록스",
+        # 가방
+        "가방", "백팩", "숄더백", "크로스백", "토트백", "미니백", "에코백",
+        "호보백", "파우치", "더플백",
+        # 악세서리
+        "모자", "볼캡", "캡모자", "비니", "선글라스", "안경", "시계",
+        "목걸이", "반지", "팔찌", "벨트", "키링", "헤어밴드",
+    ],
+    "핏/스타일": [
+        # 핏/실루엣
+        "크롭", "와이드", "오버사이즈", "슬림", "루즈", "배기", "미니", "롱",
+        "숏", "하이웨이스트", "로우라이즈", "플레어", "A라인", "박시",
+        "슬림핏", "오프숄더", "원숄더",
+        # 패턴/디테일
+        "레이어드", "셔링", "플리츠", "프릴", "리본", "스트링", "컷아웃",
+        "슬릿", "레이스", "스트라이프", "체크", "플로럴", "도트",
+        # 소재
+        "레더", "퍼", "트위드", "벨벳", "린넨", "코듀로이", "스웨이드",
+        # 스타일/무드
+        "빈티지", "레트로", "미니멀", "캐주얼", "스포티", "시티보이",
+        "고프코어", "발레코어", "올드머니", "사이버펑크",
+        "조거", "트랙", "바이커",
+    ],
+}
+
+# Flat list for backward compat
+TREND_KEYWORDS = []
+for _kws in KEYWORD_CATEGORIES.values():
+    TREND_KEYWORDS.extend(k for k in _kws if k not in TREND_KEYWORDS)
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +263,27 @@ if not platform_counts.empty:
 section_header("🔥", "크로스 플랫폼 트렌드 키워드")
 st.caption("베스트셀러 순위 기반 가중 점수 — 순위가 높을수록 더 많은 점수 반영")
 
+# ── Category filter ──
+cat_options = list(KEYWORD_CATEGORIES.keys())
+selected_cat = st.pills(
+    "카테고리 필터",
+    ["전체"] + cat_options,
+    default="전체",
+    label_visibility="collapsed",
+)
+
+if selected_cat == "전체" or selected_cat is None:
+    active_keywords = TREND_KEYWORDS
+    active_label = "전체"
+else:
+    active_keywords = KEYWORD_CATEGORIES[selected_cat]
+    active_label = selected_cat
+
 totals = get_product_keyword_totals(selected_date_str)
+if not totals.empty:
+    totals = totals[totals["keyword"].isin(active_keywords)]
 if totals.empty:
-    st.info("해당 날짜의 베스트셀러 데이터가 없습니다.")
+    st.info("해당 날짜의 베스트셀러 데이터가 없습니다." if active_label == "전체" else f"'{active_label}' 카테고리에 해당하는 트렌드 키워드가 없습니다.")
 else:
     # Top 3 performance keywords
     perf = totals.copy()
@@ -269,6 +328,7 @@ else:
     # Platform breakdown
     per_platform = get_product_keyword_counts(selected_date_str)
     if not per_platform.empty:
+        per_platform = per_platform[per_platform["keyword"].isin(active_keywords)]
         top_kws = totals.head(15)["keyword"].tolist()
         filtered = per_platform[per_platform["keyword"].isin(top_kws)]
 
