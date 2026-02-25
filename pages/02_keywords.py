@@ -202,10 +202,6 @@ def get_product_keyword_totals(snapshot_date: str, platforms: list[str] | None =
         hits=("hits", "sum"),
         platforms=("platform", "nunique"),
     ).reset_index()
-    # 크로스 플랫폼 보너스 (only when multiple platforms selected)
-    grouped["score"] = grouped.apply(
-        lambda r: round(r["score"] * (1 + (r["platforms"] - 1) * 0.2), 1), axis=1
-    )
     grouped = grouped.sort_values("score", ascending=False).reset_index(drop=True)
     return grouped
 
@@ -305,7 +301,6 @@ with st.expander("ℹ️ 점수 산정 방식"):
 |------|------|
 | **플랫폼 정규화** | 각 플랫폼 내 순위를 0\~100 점으로 정규화하여 플랫폼 간 공정 비교 |
 | **상위 10% 가산** | 플랫폼 내 상위 10% 상품은 1.5배 가중치 |
-| **크로스 플랫폼 보너스** | 여러 플랫폼에 등장할수록 가산 (2개=1.2x, 3개=1.4x, 4개=1.6x) |
 | **최소 등장 기준** | TOP 3 성과 키워드는 5개 이상 상품에 등장해야 선정 |
 
 `점/상품` = 총점 ÷ 등장 상품 수 (상품당 평균 트렌드 점수)
