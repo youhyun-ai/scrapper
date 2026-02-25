@@ -37,6 +37,12 @@ def run_all_scrapers():
     except ImportError as e:
         logger.error(f"Failed to import ZigzagScraper: {e}")
 
+    try:
+        from scrapers.ably import AblyScraper
+        scraper_classes.append(AblyScraper)
+    except ImportError as e:
+        logger.error(f"Failed to import AblyScraper: {e}")
+
     # Future:
     # from scrapers.instagram import InstagramScraper
 

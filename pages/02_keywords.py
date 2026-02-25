@@ -366,6 +366,31 @@ else:
                     subtitle,
                 ), unsafe_allow_html=True)
 
+        # Full performance keyword ranking (expandable)
+        full_perf = perf.nlargest(len(perf), "score_per_hit").reset_index(drop=True)
+        full_perf.index += 1  # 1-based ranking
+        # Add previous day's ranking
+        full_perf["전일 순위"] = full_perf["keyword"].apply(
+            lambda kw: (
+                int(prev_perf[prev_perf["keyword"] == kw].iloc[0]["prev_rank"])
+                if prev_perf is not None and not prev_perf.empty
+                and not prev_perf[prev_perf["keyword"] == kw].empty
+                else None
+            )
+        )
+        with st.expander(f"전체 성과 키워드 순위 ({len(full_perf)}개)"):
+            display_perf = full_perf[["keyword", "score_per_hit", "score", "hits", "전일 순위"]].copy()
+            display_perf.columns = ["키워드", "점/상품", "총점", "등장 상품", "전일 순위"]
+            st.dataframe(
+                display_perf,
+                use_container_width=True,
+                column_config={
+                    "점/상품": st.column_config.NumberColumn("점/상품", format="%.0f"),
+                    "총점": st.column_config.NumberColumn("총점", format="%.0f"),
+                    "전일 순위": st.column_config.NumberColumn("전일 순위", format="%d위"),
+                },
+            )
+
     # Top 20 bar chart
     fig = px.bar(
         totals.head(20),

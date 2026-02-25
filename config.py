@@ -43,6 +43,11 @@ ZIGZAG = {
     "ranking_url": "https://zigzag.kr/",
 }
 
+ABLY = {
+    "base_url": "https://m.a-bly.com",
+    "ranking_url": "https://m.a-bly.com/ranking",
+}
+
 # --- Instagram ---
 
 INSTAGRAM_HASHTAGS = [

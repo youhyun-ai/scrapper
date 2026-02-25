@@ -23,6 +23,7 @@ PLATFORM_LABELS = {
     "29CM": "twentynine_cm",
     "W컨셉": "wconcept",
     "지그재그": "zigzag",
+    "에이블리": "ably",
 }
 
 ITEMS_PER_PAGE = 20

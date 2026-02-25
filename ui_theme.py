@@ -17,6 +17,7 @@ PLATFORM_DISPLAY = {
     "twentynine_cm": "29CM",
     "wconcept": "W컨셉",
     "zigzag": "지그재그",
+    "ably": "에이블리",
 }
 
 PLATFORM_COLORS = {
@@ -24,9 +25,10 @@ PLATFORM_COLORS = {
     "twentynine_cm": "#FF6B4A",
     "wconcept": "#1B3A6B",
     "zigzag": "#FF2D78",
+    "ably": "#FF5A5F",
 }
 
-PLATFORM_COLOR_LIST = ["#1A1A1A", "#FF6B4A", "#1B3A6B", "#FF2D78"]
+PLATFORM_COLOR_LIST = ["#1A1A1A", "#FF6B4A", "#1B3A6B", "#FF2D78", "#FF5A5F"]
 
 # Plotly color sequence for charts
 CHART_COLORS = ["#6366f1", "#f43f5e", "#0ea5e9", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"]
